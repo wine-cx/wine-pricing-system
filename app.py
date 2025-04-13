@@ -133,9 +133,15 @@ if "user" in st.session_state:
             df_all["比价键"] = df_all["酒名英文字段"].astype(str) + "_" + df_all["年份字段"].astype(str)
             df_all["单价字段"] = pd.to_numeric(df_all["单价字段"], errors="coerce")
             if not df_all.empty:
-                idx_min_price = df_all.groupby("比价键")["单价字段"].idxmin()
-                df_all["是否最低价"] = ""
-                df_all.loc[idx_min_price, "是否最低价"] = "✅ 最低"
+               df_all["是否最低价"] = ""
+
+try:
+    idx_min_price = df_all.groupby("比价键")["单价字段"].idxmin()
+    idx_min_price = idx_min_price.dropna().astype("Int64")  # 去除无效行
+    df_all.loc[idx_min_price, "是否最低价"] = "✅ 最低"
+except Exception as e:
+    st.warning(f"⚠️ 无法标记最低价：{e}")
+
             else:
                 st.warning("⚠️ 当前没有有效年份的数据参与比价，表格为空。")
         else:
