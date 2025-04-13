@@ -1,9 +1,14 @@
 import streamlit as st
-st.set_page_config(page_title="红酒查价系统 - 登录 + 查价权限", page_icon="🍇")
+st.set_page_config(page_title="红酒查价系统 - 登录 + 查价权限", page_icon="🍷")
 
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
+import os
+
+# ========== 初始化文件夹 ==========
+UPLOAD_DIR = "data_uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ========== 动态读取字段模板 ==========
 @st.cache_data
@@ -38,11 +43,23 @@ def load_users(file_path="users.xlsx"):
         st.error(f"用户账号读取失败：{e}")
         return {}
 
+# ========== 加载历史数据 ==========
+@st.cache_data
+def load_uploaded_data():
+    all_files = [f for f in os.listdir(UPLOAD_DIR) if f.endswith(".csv")]
+    all_data = []
+    for file in all_files:
+        try:
+            df = pd.read_csv(os.path.join(UPLOAD_DIR, file))
+            all_data.append(df)
+        except: pass
+    return all_data
+
 users = load_users()
 column_template = load_column_template()
 
 # ========== 登录模块 ==========
-st.title("🍇 红酒查价系统 - 登录")
+st.title("🍷 红酒查价系统 - 登录")
 
 if "user" not in st.session_state:
     with st.form("login_form"):
@@ -63,9 +80,6 @@ if "user" in st.session_state:
     st.success(f"欢迎你，{st.session_state.user}（{st.session_state.role}）")
     role = st.session_state.role
 
-    if "all_data" not in st.session_state:
-        st.session_state.all_data = []
-
     supplier = st.selectbox("请选择上传的供货商：", [""] + list(column_template.keys()))
     file = st.file_uploader("上传报价文件（.xlsx）", type=["xlsx"])
 
@@ -76,9 +90,11 @@ if "user" in st.session_state:
 
             renamed = {}
             for std_col, orig_col in field_map.items():
-                if isinstance(orig_col, str) and '+' in orig_col:
-                    parts = [p.strip() for p in orig_col.split('+')]
-                    renamed[std_col] = df_raw[parts].astype(str).agg(' '.join, axis=1)
+                if "+" in str(orig_col):
+                    parts = [df_raw.get(p.strip(), "") for p in orig_col.split("+")]
+                    renamed[std_col] = parts[0].astype(str)
+                    for part in parts[1:]:
+                        renamed[std_col] += part.astype(str)
                 elif orig_col in df_raw.columns:
                     renamed[std_col] = df_raw[orig_col]
                 else:
@@ -90,9 +106,11 @@ if "user" in st.session_state:
             df_clean["上传时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             df_clean["官网链接"] = field_map.get("官网链接", "")
 
-            st.session_state.all_data.append(df_clean)
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filename = f"{supplier}_{timestamp}.csv"
+            df_clean.to_csv(os.path.join(UPLOAD_DIR, filename), index=False)
 
-            st.success(f"✅ 成功读取并映射字段，共 {len(df_clean)} 条记录")
+            st.success(f"✅ 成功读取并映射字段，共 {len(df_clean)} 条记录，已保存为 {filename}")
             st.dataframe(df_clean)
 
         except Exception as e:
@@ -101,28 +119,27 @@ if "user" in st.session_state:
         st.warning("⚠️ 请先选择供货商再上传文件。")
 
     # ========== 汇总展示 ==========
-    if st.session_state.all_data:
-        df_all = pd.concat(st.session_state.all_data, ignore_index=True)
+    all_data = load_uploaded_data()
+    if all_data:
+        df_all = pd.concat(all_data, ignore_index=True)
         st.subheader("📊 汇总比价结果")
 
         keyword = st.text_input("🔍 输入关键词（酒名/年份/供货商）进行筛选：")
         if keyword:
             df_all = df_all[df_all.astype(str).apply(lambda row: row.str.contains(keyword, case=False)).any(axis=1)]
 
-        if "酒名英文字段" in df_all.columns and "年份字段" in df_all.columns and "单价字段" in df_all.columns:
+        if set(["酒名英文字段", "年份字段", "单价字段"]).issubset(df_all.columns):
             df_all["比价键"] = df_all["酒名英文字段"].astype(str) + "_" + df_all["年份字段"].astype(str)
             df_all["单价字段"] = pd.to_numeric(df_all["单价字段"], errors="coerce")
-            df_all["是否最低价"] = ""
-            try:
+            if not df_all["单价字段"].isna().all():
                 idx_min_price = df_all.groupby("比价键")["单价字段"].idxmin()
-                idx_min_price = idx_min_price.dropna().astype("Int64")
+                df_all["是否最低价"] = ""
                 df_all.loc[idx_min_price, "是否最低价"] = "✅ 最低"
-            except Exception as e:
-                st.warning(f"⚠️ 无法标记最低价：{e}")
+            else:
+                df_all["是否最低价"] = ""
         else:
             st.warning("比价功能依赖字段：酒名英文字段、年份字段、单价字段，请确保它们存在。")
 
-        # 添加官网链接按钮（HTML）
         def render_link(row):
             url = row.get("官网链接", "")
             return f'<a href="{url}" target="_blank">🔗 官网</a>' if url else ""
