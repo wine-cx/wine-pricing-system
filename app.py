@@ -5,14 +5,53 @@ import pandas as pd
 from datetime import datetime
 from io import BytesIO
 import os
+import base64
+import requests
 
 # ========== 初始化文件夹 ==========
 UPLOAD_DIR = "data_uploads"
-if not os.path.exists(UPLOAD_DIR):
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ========== GitHub 自动保存函数 ==========
+def save_to_github(filename, content):
     try:
-        os.makedirs(UPLOAD_DIR)
-    except FileExistsError:
-        pass
+        github_token = st.secrets["GITHUB_TOKEN"]
+        repo_owner = st.secrets["REPO_OWNER"]
+        repo_name = st.secrets["REPO_NAME"]
+        branch = st.secrets.get("BRANCH", "main")
+
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/data_uploads/{filename}"
+
+        get_headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github+json"
+        }
+
+        # 检查文件是否已存在（获取 SHA）
+        get_resp = requests.get(url, headers=get_headers)
+        if get_resp.status_code == 200:
+            sha = get_resp.json()["sha"]
+        else:
+            sha = None
+
+        content_b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+        payload = {
+            "message": f"上传报价文件 {filename}",
+            "content": content_b64,
+            "branch": branch
+        }
+        if sha:
+            payload["sha"] = sha
+
+        put_resp = requests.put(url, headers=get_headers, json=payload)
+
+        if put_resp.status_code in [200, 201]:
+            st.success("✅ 文件已成功保存至 GitHub")
+        else:
+            st.warning(f"⚠️ GitHub 保存失败：{put_resp.status_code} - {put_resp.text}")
+    except Exception as e:
+        st.warning(f"⚠️ GitHub 保存异常：{e}")
 
 # ========== 动态读取字段模板 ==========
 @st.cache_data
@@ -113,7 +152,9 @@ if "user" in st.session_state:
 
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             filename = f"{supplier}_{timestamp}.csv"
-            df_clean.to_csv(os.path.join(UPLOAD_DIR, filename), index=False)
+            filepath = os.path.join(UPLOAD_DIR, filename)
+            df_clean.to_csv(filepath, index=False)
+            save_to_github(filename, df_clean.to_csv(index=False))
 
             st.success(f"✅ 成功读取并映射字段，共 {len(df_clean)} 条记录，已保存为 {filename}")
             st.dataframe(df_clean)
