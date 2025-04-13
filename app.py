@@ -108,6 +108,12 @@ if "user" not in st.session_state:
             else:
                 st.error("用户名或密码错误")
 
+
+# 🔁 清缓存按钮（登录成功后显示）
+if st.button("🔁 清除缓存 / 重载系统"):
+    st.cache_data.clear()
+    st.experimental_rerun()
+
 if "user" in st.session_state:
     st.success(f"欢迎你，{st.session_state.user}（{st.session_state.role}）")
     role = st.session_state.role
