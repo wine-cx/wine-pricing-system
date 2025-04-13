@@ -1,3 +1,4 @@
+
 import streamlit as st
 st.set_page_config(page_title="红酒查价系统 - 登录 + 查价权限", page_icon="🍷")
 
@@ -8,11 +9,9 @@ import os
 import base64
 import requests
 
-# ========== 初始化文件夹 ==========
 UPLOAD_DIR = "data_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# ========== GitHub 自动保存函数 ==========
 def save_to_github(filename, content):
     try:
         github_token = st.secrets["GITHUB_TOKEN"]
@@ -27,13 +26,8 @@ def save_to_github(filename, content):
             "Accept": "application/vnd.github+json"
         }
 
-        # 检查文件是否已存在（获取 SHA）
         get_resp = requests.get(url, headers=get_headers)
-        if get_resp.status_code == 200:
-            sha = get_resp.json()["sha"]
-        else:
-            sha = None
-
+        sha = get_resp.json()["sha"] if get_resp.status_code == 200 else None
         content_b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
 
         payload = {
@@ -53,7 +47,6 @@ def save_to_github(filename, content):
     except Exception as e:
         st.warning(f"⚠️ GitHub 保存异常：{e}")
 
-# ========== 动态读取字段模板 ==========
 @st.cache_data
 def load_column_template(file_path="字段模板.xlsx"):
     try:
@@ -76,7 +69,6 @@ def load_column_template(file_path="字段模板.xlsx"):
         st.error(f"字段模板读取失败：{e}")
         return {}
 
-# ========== 加载用户账号 ==========
 @st.cache_data
 def load_users(file_path="users.xlsx"):
     try:
@@ -86,7 +78,6 @@ def load_users(file_path="users.xlsx"):
         st.error(f"用户账号读取失败：{e}")
         return {}
 
-# ========== 加载历史数据 ==========
 @st.cache_data
 def load_uploaded_data():
     all_files = [f for f in os.listdir(UPLOAD_DIR) if f.endswith(".csv")]
@@ -102,7 +93,6 @@ def load_uploaded_data():
 users = load_users()
 column_template = load_column_template()
 
-# ========== 登录模块 ==========
 st.title("🍷 红酒查价系统 - 登录")
 
 if "user" not in st.session_state:
@@ -110,7 +100,6 @@ if "user" not in st.session_state:
         username = st.text_input("用户名")
         password = st.text_input("密码", type="password")
         submitted = st.form_submit_button("登录")
-
         if submitted:
             if username in users and users[username]["密码"] == password:
                 st.session_state.user = username
@@ -119,7 +108,6 @@ if "user" not in st.session_state:
             else:
                 st.error("用户名或密码错误")
 
-# ========== 主系统页面 ==========
 if "user" in st.session_state:
     st.success(f"欢迎你，{st.session_state.user}（{st.session_state.role}）")
     role = st.session_state.role
@@ -135,10 +123,10 @@ if "user" in st.session_state:
             renamed = {}
             for std_col, orig_col in field_map.items():
                 if "+" in str(orig_col):
-                    parts = [df_raw.get(p.strip(), "") for p in orig_col.split("+")]
-                    renamed[std_col] = parts[0].astype(str)
+                    parts = [df_raw[p.strip()].astype(str) if p.strip() in df_raw.columns else "" for p in orig_col.split("+")]
+                    renamed[std_col] = parts[0]
                     for part in parts[1:]:
-                        renamed[std_col] += part.astype(str)
+                        renamed[std_col] += part
                 elif orig_col in df_raw.columns:
                     renamed[std_col] = df_raw[orig_col]
                 else:
@@ -164,7 +152,6 @@ if "user" in st.session_state:
     elif file and not supplier:
         st.warning("⚠️ 请先选择供货商再上传文件。")
 
-    # ========== 汇总展示 ==========
     all_data = load_uploaded_data()
     if all_data:
         df_all = pd.concat(all_data, ignore_index=True)
