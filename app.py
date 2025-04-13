@@ -8,7 +8,11 @@ import os
 
 # ========== 初始化文件夹 ==========
 UPLOAD_DIR = "data_uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+if not os.path.exists(UPLOAD_DIR):
+    try:
+        os.makedirs(UPLOAD_DIR)
+    except FileExistsError:
+        pass
 
 # ========== 动态读取字段模板 ==========
 @st.cache_data
@@ -52,7 +56,8 @@ def load_uploaded_data():
         try:
             df = pd.read_csv(os.path.join(UPLOAD_DIR, file))
             all_data.append(df)
-        except: pass
+        except:
+            pass
     return all_data
 
 users = load_users()
