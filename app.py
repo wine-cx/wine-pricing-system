@@ -92,7 +92,8 @@ def load_uploaded_data():
         try:
             df = pd.read_csv(os.path.join(UPLOAD_DIR, file))
             all_data.append(df)
-        except:
+        except Exception as e:
+            st.error(f"读取文件 {file} 失败: {e}")
             pass
     return all_data
 
