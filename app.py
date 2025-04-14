@@ -1,11 +1,56 @@
 import streamlit as st
-st.set_page_config(page_title="红酒查价系统 - 登录 + 查价权限", page_icon="🍷")
-
 import pandas as pd
-import os
 from datetime import datetime
-from io import BytesIO
+import os
+import base64
+import requests
 
+# ========== 初始化文件夹 ==========
+UPLOAD_DIR = "data_uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ========== GitHub 自动保存函数 ==========
+def save_to_github(filename, content):
+    try:
+        github_token = st.secrets["GITHUB_TOKEN"]
+        repo_owner = st.secrets["REPO_OWNER"]
+        repo_name = st.secrets["REPO_NAME"]
+        branch = st.secrets.get("BRANCH", "main")
+
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/data_uploads/{filename}"
+
+        get_headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github+json"
+        }
+
+        # 检查文件是否已存在（获取 SHA）
+        get_resp = requests.get(url, headers=get_headers)
+        if get_resp.status_code == 200:
+            sha = get_resp.json()["sha"]
+        else:
+            sha = None
+
+        content_b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+        payload = {
+            "message": f"上传报价文件 {filename}",
+            "content": content_b64,
+            "branch": branch
+        }
+        if sha:
+            payload["sha"] = sha
+
+        put_resp = requests.put(url, headers=get_headers, json=payload)
+
+        if put_resp.status_code in [200, 201]:
+            st.success("✅ 文件已成功保存至 GitHub")
+        else:
+            st.warning(f"⚠️ GitHub 保存失败：{put_resp.status_code} - {put_resp.text}")
+    except Exception as e:
+        st.warning(f"⚠️ GitHub 保存异常：{e}")
+
+# ========== 动态读取字段模板 ==========
 @st.cache_data
 def load_column_template(file_path="字段模板.xlsx"):
     try:
@@ -28,6 +73,7 @@ def load_column_template(file_path="字段模板.xlsx"):
         st.error(f"字段模板读取失败：{e}")
         return {}
 
+# ========== 加载用户账号 ==========
 @st.cache_data
 def load_users(file_path="users.xlsx"):
     try:
@@ -37,12 +83,23 @@ def load_users(file_path="users.xlsx"):
         st.error(f"用户账号读取失败：{e}")
         return {}
 
+# ========== 加载历史数据 ==========
+@st.cache_data
+def load_uploaded_data():
+    all_files = [f for f in os.listdir(UPLOAD_DIR) if f.endswith(".csv")]
+    all_data = []
+    for file in all_files:
+        try:
+            df = pd.read_csv(os.path.join(UPLOAD_DIR, file))
+            all_data.append(df)
+        except:
+            pass
+    return all_data
+
 users = load_users()
 column_template = load_column_template()
 
-UPLOAD_DIR = "data_uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
+# ========== 登录模块 ==========
 st.title("🍷 红酒查价系统 - 登录")
 
 if "user" not in st.session_state:
@@ -59,45 +116,28 @@ if "user" not in st.session_state:
             else:
                 st.error("用户名或密码错误")
 
+# ========== 主系统页面 ==========
 if "user" in st.session_state:
     st.success(f"欢迎你，{st.session_state.user}（{st.session_state.role}）")
     role = st.session_state.role
-
-    if "all_data" not in st.session_state:
-        st.session_state.all_data = []
-
-    for filename in os.listdir(UPLOAD_DIR):
-        if filename.endswith(".xlsx"):
-            path = os.path.join(UPLOAD_DIR, filename)
-            try:
-                df_old = pd.read_excel(path)
-                if not df_old.empty:
-                    st.session_state.all_data.append(df_old)
-            except Exception:
-                continue
 
     supplier = st.selectbox("请选择上传的供货商：", [""] + list(column_template.keys()))
     file = st.file_uploader("上传报价文件（.xlsx）", type=["xlsx"])
 
     if supplier and file:
         try:
-            preview_df = pd.read_excel(file, nrows=10, header=None)
-            header_row_index = preview_df.apply(lambda row: row.astype(str).str.contains("酒|wine", case=False).any(), axis=1)
-            first_header = header_row_index.idxmax() if header_row_index.any() else 0
-            df_raw = pd.read_excel(file, header=first_header)
+            df_raw = pd.read_excel(file)
             field_map = column_template[supplier]
 
             renamed = {}
-            for std_col, orig_cols in field_map.items():
-                if "+" in orig_cols:
-                    parts = [col.strip() for col in orig_cols.split("+")]
-                    combined = df_raw[parts[0]].astype(str) if parts[0] in df_raw.columns else ""
-                    for p in parts[1:]:
-                        if p in df_raw.columns:
-                            combined += " " + df_raw[p].astype(str)
-                    renamed[std_col] = combined
-                elif orig_cols in df_raw.columns:
-                    renamed[std_col] = df_raw[orig_cols]
+            for std_col, orig_col in field_map.items():
+                if "+" in str(orig_col):
+                    parts = [df_raw.get(p.strip(), "") for p in orig_col.split("+")]
+                    renamed[std_col] = parts[0].astype(str)
+                    for part in parts[1:]:
+                        renamed[std_col] += part.astype(str)
+                elif orig_col in df_raw.columns:
+                    renamed[std_col] = df_raw[orig_col]
                 else:
                     renamed[std_col] = ""
 
@@ -107,12 +147,13 @@ if "user" in st.session_state:
             df_clean["上传时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             df_clean["官网链接"] = field_map.get("官网链接", "")
 
-            st.session_state.all_data.append(df_clean)
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filename = f"{supplier}_{timestamp}.csv"
+            filepath = os.path.join(UPLOAD_DIR, filename)
+            df_clean.to_csv(filepath, index=False)
+            save_to_github(filename, df_clean.to_csv(index=False))
 
-            save_path = os.path.join(UPLOAD_DIR, f"{supplier}_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx")
-            df_clean.to_excel(save_path, index=False)
-
-            st.success(f"✅ 成功读取并映射字段，共 {len(df_clean)} 条记录")
+            st.success(f"✅ 成功读取并映射字段，共 {len(df_clean)} 条记录，已保存为 {filename}")
             st.dataframe(df_clean)
 
         except Exception as e:
@@ -120,24 +161,25 @@ if "user" in st.session_state:
     elif file and not supplier:
         st.warning("⚠️ 请先选择供货商再上传文件。")
 
-    if st.session_state.all_data:
-        df_all = pd.concat(st.session_state.all_data, ignore_index=True)
+    # ========== 汇总展示 ==========
+    all_data = load_uploaded_data()
+    if all_data:
+        df_all = pd.concat(all_data, ignore_index=True)
         st.subheader("📊 汇总比价结果")
 
         keyword = st.text_input("🔍 输入关键词（酒名/年份/供货商）进行筛选：")
         if keyword:
             df_all = df_all[df_all.astype(str).apply(lambda row: row.str.contains(keyword, case=False)).any(axis=1)]
 
-        if "酒名英文字段" in df_all.columns and "年份字段" in df_all.columns and "单价字段" in df_all.columns:
-            df_all = df_all[df_all["年份字段"].notna()]
+        if set(["酒名英文字段", "年份字段", "单价字段"]).issubset(df_all.columns):
             df_all["比价键"] = df_all["酒名英文字段"].astype(str) + "_" + df_all["年份字段"].astype(str)
             df_all["单价字段"] = pd.to_numeric(df_all["单价字段"], errors="coerce")
-            if not df_all.empty:
+            if not df_all["单价字段"].isna().all():
                 idx_min_price = df_all.groupby("比价键")["单价字段"].idxmin()
                 df_all["是否最低价"] = ""
                 df_all.loc[idx_min_price, "是否最低价"] = "✅ 最低"
             else:
-                st.warning("⚠️ 当前没有有效年份的数据参与比价，表格为空。")
+                df_all["是否最低价"] = ""
         else:
             st.warning("比价功能依赖字段：酒名英文字段、年份字段、单价字段，请确保它们存在。")
 
