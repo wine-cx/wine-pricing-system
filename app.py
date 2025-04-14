@@ -163,7 +163,7 @@ if "user" in st.session_state:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df.drop(columns=["跳转官网"], errors="ignore").to_excel(writer, index=False, sheet_name='报价比价')
-                
+                writer.save()
             return output.getvalue()
 
         excel_bytes = convert_df(df_all[columns_to_show])
