@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 import os
-import base64
-import requests
+from datetime import datetime
 
 # ========== 初始化文件夹 ==========
 UPLOAD_DIR = "data_uploads"
@@ -83,14 +81,14 @@ def load_users(file_path="users.xlsx"):
         st.error(f"用户账号读取失败：{e}")
         return {}
 
-# ========== 加载历史数据 ==========
-@st.cache_data
+# ========== 读取上传的文件 ==========
 def load_uploaded_data():
     all_files = [f for f in os.listdir(UPLOAD_DIR) if f.endswith(".csv")]
     all_data = []
     for file in all_files:
         try:
-            df = pd.read_csv(os.path.join(UPLOAD_DIR, file))
+            # 强制指定编码为 ISO-8859-1 处理文件读取错误
+            df = pd.read_csv(os.path.join(UPLOAD_DIR, file), encoding='ISO-8859-1')
             all_data.append(df)
         except Exception as e:
             st.error(f"读取文件 {file} 失败: {e}")
