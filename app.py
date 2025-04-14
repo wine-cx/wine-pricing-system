@@ -5,6 +5,7 @@ from datetime import datetime
 import base64
 import requests
 from io import BytesIO
+import chardet
 
 # ========== 初始化文件夹 ==========
 UPLOAD_DIR = "data_uploads"
@@ -84,18 +85,46 @@ def load_users(file_path="users.xlsx"):
         st.error(f"用户账号读取失败：{e}")
         return {}
 
+# ========== 智能检测文件编码 ==========
+def detect_file_encoding(file_path):
+    with open(file_path, 'rb') as f:
+        rawdata = f.read(10000)  # 读取前10000字节用于检测编码
+    result = chardet.detect(rawdata)
+    return result['encoding']
+
 # ========== 读取上传的文件 ==========
 def load_uploaded_data():
-    all_files = [f for f in os.listdir(UPLOAD_DIR) if f.endswith(".csv")]
+    all_files = [f for f in os.listdir(UPLOAD_DIR) if f.endswith((".csv", ".xlsx"))]
     all_data = []
     for file in all_files:
         try:
-            # 尝试读取文件并忽略编码错误，指定 encoding='ISO-8859-1' 以防止乱码问题
-            df = pd.read_csv(os.path.join(UPLOAD_DIR, file), encoding='ISO-8859-1')
+            file_path = os.path.join(UPLOAD_DIR, file)
+            if file.endswith('.csv'):
+                # 自动检测编码
+                encoding = detect_file_encoding(file_path)
+                try:
+                    df = pd.read_csv(file_path, encoding=encoding)
+                    st.toast(f"成功读取 {file} (编码: {encoding})")
+                except Exception as e:
+                    st.warning(f"首次尝试 {encoding} 编码失败，尝试备用编码...")
+                    # 备用编码尝试
+                    encodings = ['utf-8', 'gbk', 'big5', 'utf-16', 'iso-8859-1']
+                    for enc in encodings:
+                        try:
+                            df = pd.read_csv(file_path, encoding=enc)
+                            st.toast(f"成功用备用编码 {enc} 读取 {file}")
+                            break
+                        except:
+                            continue
+                    else:
+                        raise ValueError(f"无法读取文件 {file} - 尝试了所有编码")
+            else:  # Excel文件
+                df = pd.read_excel(file_path)
+            
             all_data.append(df)
         except Exception as e:
             st.error(f"读取文件 {file} 失败: {e}")
-            pass
+            continue
     return all_data
 
 users = load_users()
@@ -124,11 +153,39 @@ if "user" in st.session_state:
     role = st.session_state.role
 
     supplier = st.selectbox("请选择上传的供货商：", [""] + list(column_template.keys()))
-    file = st.file_uploader("上传报价文件（.xlsx）", type=["xlsx"])
+    file = st.file_uploader("上传报价文件（支持 .xlsx 或 .csv）", type=["xlsx", "csv"])
+    st.caption("注意：CSV文件建议使用UTF-8编码，如遇中文乱码请尝试另存为UTF-8格式")
 
     if supplier and file:
         try:
-            df_raw = pd.read_excel(file)
+            # 根据文件类型使用不同读取方式
+            if file.name.endswith('.csv'):
+                # 读取CSV文件内容用于编码检测
+                content = file.getvalue()
+                result = chardet.detect(content)
+                encoding = result['encoding']
+                
+                # 尝试读取
+                try:
+                    file.seek(0)  # 重置文件指针
+                    df_raw = pd.read_csv(file, encoding=encoding)
+                    st.toast(f"检测到编码: {encoding}，成功读取CSV文件")
+                except Exception as e:
+                    st.warning(f"编码 {encoding} 读取失败，尝试备用编码...")
+                    encodings = ['utf-8', 'gbk', 'big5', 'utf-16', 'iso-8859-1']
+                    for enc in encodings:
+                        try:
+                            file.seek(0)
+                            df_raw = pd.read_csv(file, encoding=enc)
+                            st.toast(f"成功用备用编码 {enc} 读取文件")
+                            break
+                        except:
+                            continue
+                    else:
+                        raise ValueError("无法读取CSV文件 - 请检查文件编码")
+            else:  # Excel文件
+                df_raw = pd.read_excel(file)
+            
             field_map = column_template[supplier]
 
             renamed = {}
@@ -152,14 +209,16 @@ if "user" in st.session_state:
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             filename = f"{supplier}_{timestamp}.csv"
             filepath = os.path.join(UPLOAD_DIR, filename)
-            df_clean.to_csv(filepath, index=False)
-            save_to_github(filename, df_clean.to_csv(index=False))
+            
+            # 统一保存为UTF-8 with BOM格式
+            df_clean.to_csv(filepath, index=False, encoding='utf-8-sig')
+            save_to_github(filename, df_clean.to_csv(index=False, encoding='utf-8-sig'))
 
             st.success(f"✅ 成功读取并映射字段，共 {len(df_clean)} 条记录，已保存为 {filename}")
             st.dataframe(df_clean)
 
         except Exception as e:
-            st.error(f"❌ 文件读取失败：{e}")
+            st.error(f"❌ 文件处理失败：{e}")
     elif file and not supplier:
         st.warning("⚠️ 请先选择供货商再上传文件。")
 
