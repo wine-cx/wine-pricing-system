@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+import base64
+import requests
+from io import BytesIO
 
 # ========== 初始化文件夹 ==========
 UPLOAD_DIR = "data_uploads"
@@ -87,7 +90,7 @@ def load_uploaded_data():
     all_data = []
     for file in all_files:
         try:
-            # 强制指定编码为 ISO-8859-1 处理文件读取错误
+            # 尝试读取文件并忽略编码错误，指定 encoding='ISO-8859-1' 以防止乱码问题
             df = pd.read_csv(os.path.join(UPLOAD_DIR, file), encoding='ISO-8859-1')
             all_data.append(df)
         except Exception as e:
